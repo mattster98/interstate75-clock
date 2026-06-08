@@ -18,8 +18,7 @@ import ntptime
 from interstate75 import Interstate75, DISPLAY_INTERSTATE75_64X32
 from picovector import ANTIALIAS_NONE, ANTIALIAS_BEST, PicoVector, Transform
 
-SSID              = "sandstone bottom"
-PASSWORD          = "Shana is the best!"
+from secrets import SSID, PASSWORD
 HUE_CYCLE_SECS    = 120
 TRAIL_LEN         = 55
 
