@@ -1,6 +1,6 @@
 ![Interstate 75 W rainbow clock in action](clock.jpg)
 
-This is a "fancy" animated clock that syncs to NTP and presents the time, day of the week, and date in a colorful way.  I used a 64x32 pixel display but you should be able to adapt it to your 
+This is a "fancy" animated clock that syncs to NTP and presents the time, day of the week, and date in a colorful way.  I used a 64x32 pixel display but you should be able to adapt it to your panel if it is a different size.
 
 wifi ssid, wifi password and webrepl password go into the secrets file (example provided).
 
