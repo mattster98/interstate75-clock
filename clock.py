@@ -83,7 +83,9 @@ for _ch in '0123456789:':
         _CHAR_ADV[_ch] = max(1, int(_w))
     except Exception:
         _CHAR_ADV[_ch] = FONT_ADV_C if _ch == ':' else FONT_ADV_D
-vector.set_transform(Transform())  # reset after measure_text may have modified it
+# Single reusable transform — reset() + translate() each use, zero heap allocs per frame
+_T = Transform()
+_T.reset()
 
 # ── Perimeter pixels, clockwise from top-left (raw) ──────────────────
 _perim_raw = []
@@ -187,16 +189,19 @@ def draw_comet(frac, second):
 def draw_time(hour, minute, display_second, base_hue):
     """HH:MM:SS via PicoVector, each char a different cycling hue."""
     s = "{:02d}:{:02d}:{:02d}".format(hour, minute, display_second)
-    total_w = sum(_CHAR_ADV[ch] for ch in s)
+    total_w = (_CHAR_ADV[s[0]] + _CHAR_ADV[s[1]] + _CHAR_ADV[s[2]] +
+               _CHAR_ADV[s[3]] + _CHAR_ADV[s[4]] + _CHAR_ADV[s[5]] +
+               _CHAR_ADV[s[6]] + _CHAR_ADV[s[7]])
     x = (WIDTH - total_w) // 2
-    for i, ch in enumerate(s):
+    for i in range(8):
+        ch = s[i]
         h = (base_hue + i * 0.09) % 1.0
         v = 0.7 if ch == ':' else 1.0
         graphics.set_pen(graphics.create_pen_hsv(h, 1.0, v))
-        t = Transform()
-        t.translate(x, FONT_Y)   # position in pixels via transform
-        vector.set_transform(t)
-        vector.text(ch, 0, 0)    # always 0,0 — transform handles placement
+        _T.reset()
+        _T.translate(x, FONT_Y)
+        vector.set_transform(_T)
+        vector.text(ch, 0, 0)
         x += _CHAR_ADV[ch]
 
 def draw_date(weekday, month, mday, base_hue):
@@ -222,7 +227,7 @@ def run():
     while True:
         wdt.feed()
         gc_ticker += 1
-        if gc_ticker >= 300:  # every ~10 seconds
+        if gc_ticker >= 60:  # every ~2 seconds
             gc.collect()
             gc_ticker = 0
 
