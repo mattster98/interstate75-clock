@@ -221,6 +221,8 @@ def run():
     last_disp_sec  = -1
     second_start_ms = time.ticks_ms()
     gc_ticker = 0
+    log_ticker = 0
+    start_ms = time.ticks_ms()
 
     # Cached strings rebuilt once per second instead of every frame
     hour = 0; minute = 0; second = 0
@@ -235,6 +237,13 @@ def run():
         if gc_ticker >= 300:  # every ~10 seconds
             gc.collect()
             gc_ticker = 0
+
+        log_ticker += 1
+        if log_ticker >= 1800:  # every ~60 seconds
+            uptime_s = time.ticks_diff(time.ticks_ms(), start_ms) // 1000
+            print("uptime={}s mem_free={} wifi={}".format(
+                uptime_s, gc.mem_free(), _wlan.isconnected()))
+            log_ticker = 0
 
         now_ms   = time.ticks_ms()
         wall_sec = time.time()  # integer, no alloc
