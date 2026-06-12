@@ -186,9 +186,8 @@ def draw_comet(frac, second):
     graphics.pixel(dpx, dpy)
     return display_second
 
-def draw_time(hour, minute, display_second, base_hue):
+def draw_time(s, base_hue):
     """HH:MM:SS via PicoVector, each char a different cycling hue."""
-    s = "{:02d}:{:02d}:{:02d}".format(hour, minute, display_second)
     total_w = (_CHAR_ADV[s[0]] + _CHAR_ADV[s[1]] + _CHAR_ADV[s[2]] +
                _CHAR_ADV[s[3]] + _CHAR_ADV[s[4]] + _CHAR_ADV[s[5]] +
                _CHAR_ADV[s[6]] + _CHAR_ADV[s[7]])
@@ -204,11 +203,9 @@ def draw_time(hour, minute, display_second, base_hue):
         vector.text(ch, 0, 0)
         x += _CHAR_ADV[ch]
 
-def draw_date(weekday, month, mday, base_hue):
+def draw_date(day_str, month_str, base_hue):
     """Rows 17-22: full day name. Rows 24-29: 'May 13'."""
     graphics.set_font("bitmap8")
-    day_str   = DAYS_FULL[weekday]
-    month_str = "{} {:02d}".format(MONTHS[month - 1], mday)
     graphics.set_pen(graphics.create_pen_hsv((base_hue + 0.3) % 1.0, 0.5, 0.85))
     graphics.text(day_str, (WIDTH - graphics.measure_text(day_str, scale=1)) // 2, 14, scale=1)
     graphics.set_pen(graphics.create_pen_hsv((base_hue + 0.5) % 1.0, 0.5, 0.85))
@@ -220,38 +217,53 @@ import _thread
 
 def run():
     wdt = machine.WDT(timeout=8000)
-    last_second = -1
+    last_wall_sec  = -1   # time.time() value — int, no alloc
+    last_disp_sec  = -1
     second_start_ms = time.ticks_ms()
     gc_ticker = 0
+
+    # Cached strings rebuilt once per second instead of every frame
+    hour = 0; minute = 0; second = 0
+    weekday = 0; month = 1; mday = 1
+    time_str  = "00:00:00"
+    day_str   = DAYS_FULL[0]
+    month_str = "Jan 01"
 
     while True:
         wdt.feed()
         gc_ticker += 1
-        if gc_ticker >= 60:  # every ~2 seconds
+        if gc_ticker >= 300:  # every ~10 seconds
             gc.collect()
             gc_ticker = 0
 
-        t = local_time()
-        year, month, mday, hour, minute, second, weekday, yearday = t
+        now_ms   = time.ticks_ms()
+        wall_sec = time.time()  # integer, no alloc
 
-        # Sync frac to wall-clock seconds.
-        # ticks_ms() is independent of time.localtime(), so without this,
-        # frac can be near 1.0 when the wall second ticks, causing
-        # display_second to jump forward then snap back on the next frame.
-        now_ms = time.ticks_ms()
-        if second != last_second:
-            last_second = second
+        # Call local_time() only when the wall second changes
+        if wall_sec != last_wall_sec:
+            last_wall_sec = wall_sec
+            t = local_time()
+            hour    = t[3]; minute  = t[4]; second  = t[5]
+            weekday = t[6]; month   = t[1]; mday    = t[2]
             second_start_ms = now_ms
-        frac = min(time.ticks_diff(now_ms, second_start_ms) / 1000.0, 0.999)
+            day_str   = DAYS_FULL[weekday]
+            month_str = "{} {:02d}".format(MONTHS[month - 1], mday)
 
-        base_hue = (time.time() / HUE_CYCLE_SECS) % 1.0
+        frac = min(time.ticks_diff(now_ms, second_start_ms) / 1000.0, 0.999)
+        base_hue = (wall_sec / HUE_CYCLE_SECS) % 1.0
 
         graphics.set_pen(graphics.create_pen(0, 0, 0))
         graphics.clear()
 
         display_second = draw_comet(frac, second)
-        draw_time(hour, minute, display_second, base_hue)
-        draw_date(weekday, month, mday, base_hue)
+
+        # Rebuild time string only when the displayed second changes
+        if display_second != last_disp_sec:
+            last_disp_sec = display_second
+            time_str = "{:02d}:{:02d}:{:02d}".format(hour, minute, display_second)
+
+        draw_time(time_str, base_hue)
+        draw_date(day_str, month_str, base_hue)
 
         i75.update(graphics)
         time.sleep(0.033)  # ~30 fps
