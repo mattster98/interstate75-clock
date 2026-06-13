@@ -3,7 +3,7 @@
 # Default remote name is main.py. Pushes secrets.py + file then soft-resets the board.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PASSWD=$(python3 -c "import sys; sys.path.insert(0,'$DIR'); from secrets import WEBREPL_PASSWD; print(WEBREPL_PASSWD)")
-HOST="192.168.10.192"
+HOST="192.168.10.198"
 
 # Retry until webrepl is up (board can take 20-40s to connect WiFi + start webrepl)
 MAX=12; WAIT=5

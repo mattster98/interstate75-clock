@@ -13,7 +13,7 @@ _dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _dir)
 from secrets import WEBREPL_PASSWD
 
-HOST   = "192.168.10.192"
+HOST   = "192.168.10.198"
 PORT   = 8266
 PASSWD = WEBREPL_PASSWD
 
