@@ -215,8 +215,8 @@ def draw_date(day_str, month_str, base_hue):
 import webrepl
 import _thread
 
-def run():
-    wdt = machine.WDT(timeout=8000)
+def run(wdt):
+
     last_wall_sec  = -1   # time.time() value — int, no alloc
     last_disp_sec  = -1
     second_start_ms = time.ticks_ms()
@@ -277,10 +277,21 @@ def run():
         i75.update(graphics)
         time.sleep(0.033)  # ~30 fps
 
+import webrepl
 try:
     webrepl.start()
     print("webrepl: started")
 except Exception as e:
     print("webrepl: FAILED:", type(e).__name__, e)
-print("clock: starting thread")
-_thread.start_new_thread(run, ())
+
+# WDT created here so it only arms once we're ready to run
+wdt = machine.WDT(timeout=8000)
+
+# Single-threaded on core 0 — no _thread, display stays stable
+print("clock: running")
+try:
+    run(wdt)
+except Exception as e:
+    import sys
+    sys.print_exception(e)
+    print("clock: CRASHED — WDT will reset board in 8s")
