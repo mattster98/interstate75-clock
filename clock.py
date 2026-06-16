@@ -26,28 +26,40 @@ TRAIL_LEN         = 55
 # Connect WiFi and sync NTP here. On the new firmware (pico-sdk 2.1.1)
 # the CYW43 DMA conflict is fixed, so WiFi survives Interstate75 DMA.
 # We do this before the display starts so the time is set on boot.
+network.hostname("i75clock")  # router will expose this as i75clock / i75clock.local
 _wlan = network.WLAN(network.STA_IF)
+_wlan.active(False)  # always deactivate first for a clean start
+time.sleep_ms(500)
 _wlan.active(True)
-if not _wlan.isconnected():
-    print("WiFi: connecting...")
-    _wlan.connect(SSID, PASSWORD)
-    for _ in range(40):
-        if _wlan.isconnected():
-            break
-        time.sleep(0.5)
+print("WiFi: connecting...")
+_wlan.connect(SSID, PASSWORD)
+for _ in range(120):          # up to 60s — first boot can be slow
+    if _wlan.isconnected():
+        break
+    time.sleep(0.5)
 if _wlan.isconnected():
     _wlan.config(pm=0xa11140)
     print("WiFi:", _wlan.ifconfig()[0])
-    ntptime.timeout = 2
-    for _host in ("time.cloudflare.com", "time.google.com", "pool.ntp.org"):
-        try:
-            ntptime.host = _host
-            ntptime.settime()
-            print("NTP: synced via", _host)
-            break
-        except Exception as _e:
-            print("NTP:", _host, "failed:", _e)
+    ntptime.timeout = 3
+    for _attempt in range(3):   # up to 3 full passes through NTP servers
+        for _host in ("time.cloudflare.com", "time.google.com", "pool.ntp.org"):
+            try:
+                ntptime.host = _host
+                ntptime.settime()
+                _ntp_ok = True
+                print("NTP: synced via", _host)
+                break
+            except Exception as _e:
+                print("NTP:", _host, "failed:", _e)
+        else:
+            time.sleep(2)
+            continue
+        break
+    else:
+        _ntp_ok = False
+        print("NTP: all attempts failed — time may be wrong")
 else:
+    _ntp_ok = False
     print("WiFi: failed — time may be wrong")
 
 # ── Display init (HUB75 DMA starts here, WiFi unusable after this) ────
@@ -212,17 +224,41 @@ def draw_date(day_str, month_str, base_hue):
     graphics.text(month_str, (WIDTH - graphics.measure_text(month_str, scale=1)) // 2, 23, scale=1)
 
 # ── Main ─────────────────────────────────────────────────────────────
+import uasyncio as asyncio
 import webrepl
-import _thread
 
-def run(wdt):
+async def run(wdt):
 
     last_wall_sec  = -1   # time.time() value — int, no alloc
     last_disp_sec  = -1
     second_start_ms = time.ticks_ms()
     gc_ticker = 0
     log_ticker = 0
+    ntp_ticker = 0
     start_ms = time.ticks_ms()
+    ntp_synced = _ntp_ok
+    if not ntp_synced:
+        ntp_ticker = 107700  # retry NTP within ~10s of entering run()
+
+    # Boot status splash — shows WiFi/NTP result for 3 seconds on the display
+    _ip = _wlan.ifconfig()[0] if _wlan.isconnected() else ""
+    _ip_short = ".".join(_ip.split(".")[2:]) if _ip else ""
+    for _ in range(90):
+        wdt.feed()
+        graphics.set_pen(graphics.create_pen(0, 0, 0))
+        graphics.clear()
+        graphics.set_font("bitmap8")
+        _s = "WiFi OK" if _wlan.isconnected() else "No WiFi"
+        graphics.set_pen(graphics.create_pen(0, 220, 0) if _wlan.isconnected() else graphics.create_pen(220, 0, 0))
+        graphics.text(_s, (WIDTH - graphics.measure_text(_s, scale=1)) // 2, 2, scale=1)
+        if _ip_short:
+            graphics.set_pen(graphics.create_pen(80, 80, 80))
+            graphics.text(_ip_short, (WIDTH - graphics.measure_text(_ip_short, scale=1)) // 2, 12, scale=1)
+        _s = "NTP OK" if ntp_synced else "No NTP"
+        graphics.set_pen(graphics.create_pen(0, 220, 0) if ntp_synced else graphics.create_pen(220, 100, 0))
+        graphics.text(_s, (WIDTH - graphics.measure_text(_s, scale=1)) // 2, 22, scale=1)
+        i75.update(graphics)
+        await asyncio.sleep_ms(33)
 
     # Cached strings rebuilt once per second instead of every frame
     hour = 0; minute = 0; second = 0
@@ -241,9 +277,29 @@ def run(wdt):
         log_ticker += 1
         if log_ticker >= 1800:  # every ~60 seconds
             uptime_s = time.ticks_diff(time.ticks_ms(), start_ms) // 1000
-            print("uptime={}s mem_free={} wifi={}".format(
-                uptime_s, gc.mem_free(), _wlan.isconnected()))
+            print("uptime={}s mem_free={} wifi={} ntp_ok={}".format(
+                uptime_s, gc.mem_free(), _wlan.isconnected(), ntp_synced))
             log_ticker = 0
+            if not _wlan.isconnected():
+                print("WiFi: reconnecting...")
+                try:
+                    _wlan.connect(SSID, PASSWORD)
+                except Exception as _e:
+                    print("WiFi: reconnect error:", _e)
+
+        ntp_ticker += 1
+        if ntp_ticker >= 108000:  # every ~60 min, resync clock
+            ntp_ticker = 0
+            if _wlan.isconnected():
+                for _host in ("time.cloudflare.com", "time.google.com", "pool.ntp.org"):
+                    try:
+                        ntptime.host = _host
+                        ntptime.settime()
+                        ntp_synced = True
+                        print("NTP: resynced via", _host)
+                        break
+                    except Exception as _e:
+                        print("NTP:", _host, "failed:", _e)
 
         now_ms   = time.ticks_ms()
         wall_sec = time.time()  # integer, no alloc
@@ -275,9 +331,8 @@ def run(wdt):
         draw_date(day_str, month_str, base_hue)
 
         i75.update(graphics)
-        time.sleep(0.033)  # ~30 fps
+        await asyncio.sleep_ms(33)  # ~30 fps, yields to webrepl event loop
 
-import webrepl
 try:
     webrepl.start()
     print("webrepl: started")
@@ -287,11 +342,42 @@ except Exception as e:
 # WDT created here so it only arms once we're ready to run
 wdt = machine.WDT(timeout=8000)
 
-# Single-threaded on core 0 — no _thread, display stays stable
+async def main():
+    # Reset listener: raw non-blocking socket poll, compatible with all MicroPython builds.
+    # Cleanly shuts down WiFi before reset so CYW43 is cold on next boot.
+    import socket as _sock
+    _srv = _sock.socket()
+    _srv.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    _srv.bind(('', 8267))
+    _srv.listen(1)
+    _srv.setblocking(False)
+    print("reset: listening on port 8267")
+
+    async def _reset_listener():
+        while True:
+            try:
+                conn, _ = _srv.accept()
+                conn.close()
+                print("reset: triggered — shutting down WiFi then resetting")
+                try:
+                    _wlan.disconnect()
+                    await asyncio.sleep_ms(300)
+                except Exception:
+                    pass
+                _wlan.active(False)
+                await asyncio.sleep_ms(300)
+                machine.reset()
+            except OSError:
+                pass
+            await asyncio.sleep_ms(100)
+
+    asyncio.create_task(_reset_listener())
+    try:
+        await run(wdt)
+    except Exception as e:
+        import sys
+        sys.print_exception(e)
+        print("clock: CRASHED — WDT will reset board in 8s")
+
 print("clock: running")
-try:
-    run(wdt)
-except Exception as e:
-    import sys
-    sys.print_exception(e)
-    print("clock: CRASHED — WDT will reset board in 8s")
+asyncio.run(main())
